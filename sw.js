@@ -1,4 +1,4 @@
-const CACHE='orber-shell-v1.1.0';
+const CACHE='orber-shell-v1.1.1';
 const SHELL=['./','./index.html','./style.css','./app.js','./mobile.js','./mobile.css','./icon.svg','./manifest.webmanifest'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))));
 self.addEventListener('message',e=>{if(e.data?.type==='SKIP_WAITING')self.skipWaiting()});

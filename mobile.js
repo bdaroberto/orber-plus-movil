@@ -28,3 +28,57 @@ $('video').onended=()=>{const next=nextFor(active);if(cfg.autoNext&&next&&downlo
 const saveTime=$('video').ontimeupdate;let lastTime=0;$('video').ontimeupdate=()=>{if(Date.now()-lastTime>2000){lastTime=Date.now();saveTime()}};$('video').addEventListener('pause',()=>saveTime());addEventListener('pagehide',()=>saveTime());document.addEventListener('visibilitychange',()=>{if(document.hidden)saveTime()});
 let reloading=false;navigator.serviceWorker?.addEventListener('controllerchange',()=>{if(!reloading){reloading=true;location.reload()}});
 (async()=>{try{const dir=await mediaDir();for(const id of Object.keys(mediaIndex)){try{await dir.getFileHandle(mediaIndex[id].file);downloaded.add(id)}catch{delete mediaIndex[id]}}mediaSave();render()}catch{render()}})();
+
+// 1.1.1: portadas persistentes y transferencias visibles desde cualquier posición.
+let artworkGeneration=0;
+loadPosters=async function(){
+    const generation=++artworkGeneration;
+    const previous=posterURLs;posterURLs=[];previous.forEach(URL.revokeObjectURL);
+    const images=[...document.querySelectorAll('[data-poster]')];
+    for(const img of images){
+        const id=img.dataset.poster;
+        const key=new URL('./__artwork__/'+encodeURIComponent(id),location.href).href;
+        img.removeAttribute('src');img.classList.add('cover-placeholder');
+        img.alt='Portada pendiente';
+        try{
+            let cache;try{cache=await caches.open('orber-artwork-v1')}catch{}
+            let cached=cache?await cache.match(key):null;
+            let blob=cached?await cached.blob():null;
+            if(!blob&&token&&Date.now()<expires){
+                const r=await driveRequest(`files/${encodeURIComponent(id)}?alt=media`);
+                blob=await r.blob();
+                if(blob.type.startsWith('image/')&&blob.size<12*1024*1024&&cache){
+                    await cache.put(key,new Response(blob,{headers:{'Content-Type':blob.type}})).catch(()=>{});
+                }
+            }
+            if(generation!==artworkGeneration||!img.isConnected)return;
+            if(!blob)continue;
+            const url=URL.createObjectURL(blob);posterURLs.push(url);
+            img.onerror=()=>{img.removeAttribute('src');img.classList.add('cover-placeholder')};
+            img.onload=()=>img.classList.remove('cover-placeholder');
+            img.src=url;
+        }catch{/* Conservar espacio de portada sin romper el catálogo. */}
+    }
+};
+const downloadCore=download;let visibleDownloadID=null;
+function reflectTransfer(){
+    if(!visibleDownloadID)return;
+    const progress=$('#transferProgress');
+    const label=progress.hasAttribute('value')?`Descargando · ${Math.floor(progress.value)}%`:'Preparando descarga…';
+    for(const b of document.querySelectorAll('[data-download]')){
+        if(b.dataset.download===visibleDownloadID){b.disabled=true;if(b.textContent!==label)b.textContent=label}
+    }
+}
+download=async function(id){
+    if(job){status('Ya hay una descarga activa. Mira el panel inferior para ver el progreso o cancelarla.');return}
+    visibleDownloadID=id;status('Preparando descarga. El progreso aparecerá en el panel inferior.');
+    try{const p=downloadCore(id);reflectTransfer();await p}finally{visibleDownloadID=null;render()}
+};
+new MutationObserver(reflectTransfer).observe($('#transferProgress'),{attributes:true,attributeFilter:['value']});
+const renderCore=render;render=function(){renderCore();reflectTransfer()};
+$('#transfer').setAttribute('role','status');$('#transfer').setAttribute('aria-live','polite');
+const persistNotice=status;status=function(message){persistNotice(message);if(!job&&/descarga completada|descarga cancelada|no hay cuota|drive \(/i.test(message)){
+    let toast=$('#feedbackToast');if(!toast){toast=document.createElement('div');toast.id='feedbackToast';toast.setAttribute('role','status');document.body.append(toast)}
+    toast.textContent=message;toast.hidden=false;clearTimeout(status.toastTimer);status.toastTimer=setTimeout(()=>{toast.hidden=true},6000);
+}};
+if(tab==='series')loadPosters();
