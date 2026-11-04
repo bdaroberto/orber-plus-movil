@@ -82,3 +82,51 @@ const persistNotice=status;status=function(message){persistNotice(message);if(!j
     toast.textContent=message;toast.hidden=false;clearTimeout(status.toastTimer);status.toastTimer=setTimeout(()=>{toast.hidden=true},6000);
 }};
 if(tab==='series')loadPosters();
+
+// 1.1.2: panel de descargas con estado propio, independiente de las tarjetas.
+const transfers=JSON.parse(localStorage.getItem('orber-transfer-history')||'{}');
+for(const t of Object.values(transfers))if(t.state==='active'){t.state='interrupted';t.message='La aplicación se cerró durante la descarga. Puedes volver a intentarlo.'}
+let downloadsFilter='all',activeTransfer=null,lastTransferSave=0;
+function saveTransfers(){localStorage.setItem('orber-transfer-history',JSON.stringify(transfers))}
+function transferView(){
+    if(!activeTransfer)return;
+    const t=transfers[activeTransfer],p=$('#transferProgress');
+    t.percent=p.hasAttribute('value')?Math.floor(p.value):null;
+    t.message=$('#transferInfo').textContent;
+    const box=$('#activeTransferDetail');
+    if(box){const bar=box.querySelector('progress');if(t.percent===null)bar.removeAttribute('value');else bar.value=t.percent;box.querySelector('[data-live-message]').textContent=(t.percent===null?'Preparando…':t.percent+'%')+' · '+t.message}
+    if(Date.now()-lastTransferSave>1000){lastTransferSave=Date.now();saveTransfers()}
+}
+function downloadDashboard(){
+    const q=$('#search').value.toLowerCase(),all=items.filter(x=>`${x.title} ${x.series||''} ${x.name}`.toLowerCase().includes(q));
+    const done=all.filter(x=>downloaded.has(x.id)),pending=all.filter(x=>!downloaded.has(x.id)&&x.id!==activeTransfer);
+    const failed=all.filter(x=>['error','cancelled','interrupted'].includes(transfers[x.id]?.state)&&!downloaded.has(x.id));
+    const x=items.find(i=>i.id===activeTransfer),t=x?transfers[x.id]:null;
+    let html=`<h2>Descargas</h2><p class="muted">${done.length} disponibles sin conexión · ${pending.length} sin descargar${x?' · 1 en curso':''}</p>`;
+    if(x)html+=`<section id="activeTransferDetail" class="transfer-detail"><span class="download-state">EN CURSO</span><h3>${esc(x.title)}</h3><p class="filename">${esc(x.name)}</p><progress max="100" ${t.percent===null?'':`value="${t.percent}"`}></progress><p data-live-message aria-live="polite">${esc(t.message||'Preparando…')}</p><button id="cancelDashboard">Cancelar descarga</button><p class="muted">Mantén Orber+ abierto hasta que termine.</p></section>`;
+    html+='<div class="download-filters">'+[['all','Todo'],['done','Descargados'],['pending','Sin descargar'],['errors','Errores / cancelados']].map(([v,label])=>`<button data-dlfilter="${v}" ${downloadsFilter===v?'class="primary"':''}>${label}</button>`).join('')+'</div>';
+    const list=downloadsFilter==='done'?done:downloadsFilter==='pending'?pending:downloadsFilter==='errors'?failed:all.filter(x=>x.id!==activeTransfer);
+    html+='<div class="grid">'+list.map(x=>{let h=card(x),state=transfers[x.id];if(!downloaded.has(x.id)&&state&&['error','cancelled','interrupted'].includes(state.state)){const label={error:'Error',cancelled:'Cancelada',interrupted:'Interrumpida'}[state.state];h=h.replace('<div class="body">',`<div class="body"><p class="download-error">${label}: ${esc(state.message||'Puedes volver a descargar.')}</p>`)}return h}).join('')+'</div>';
+    if(!list.length)html+='<p class="empty">No hay videos en este filtro.</p>';
+    $('#content').innerHTML=html;
+    if($('#cancelDashboard'))$('#cancelDashboard').onclick=()=>job?.abort();
+    document.querySelectorAll('[data-dlfilter]').forEach(b=>b.onclick=()=>{downloadsFilter=b.dataset.dlfilter;downloadDashboard()});
+}
+const renderBeforeDashboard=render;
+render=function(){renderBeforeDashboard();if(tab==='downloads')downloadDashboard()};
+download=async function(id){
+    if(job||activeTransfer){tab='downloads';render();status('Ya hay una descarga en curso. Puedes verla o cancelarla aquí.');return}
+    const x=items.find(x=>x.id===id);if(!x)throw Error('No se encontró el video en el catálogo.');if(downloaded.has(id)){tab='downloads';downloadsFilter='done';render();return}
+    activeTransfer=id;visibleDownloadID=id;transfers[id]={state:'active',percent:null,message:'Preparando conexión y almacenamiento…',started:Date.now()};saveTransfers();
+    tab='downloads';downloadsFilter='all';render();window.scrollTo({top:0,behavior:'instant'});
+    try{
+        // Permitir que se pinte la vista antes de iniciar las operaciones asíncronas.
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        await downloadCore(id);
+        transfers[id]={...transfers[id],state:downloaded.has(id)?'done':'cancelled',percent:downloaded.has(id)?100:null,message:downloaded.has(id)?'Disponible sin conexión.':'Descarga cancelada; puedes volver a intentarlo.',finished:Date.now()};
+    }catch(e){transfers[id]={...transfers[id],state:'error',message:e.message||String(e),finished:Date.now()};throw e}
+    finally{activeTransfer=null;visibleDownloadID=null;saveTransfers();render()}
+};
+new MutationObserver(transferView).observe($('#transferProgress'),{attributes:true,attributeFilter:['value']});
+new MutationObserver(transferView).observe($('#transferInfo'),{childList:true,characterData:true,subtree:true});
+saveTransfers();
