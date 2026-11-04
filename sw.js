@@ -1,5 +1,5 @@
-const CACHE='orber-shell-v1.3.0';
-const SHELL=['./','./index.html','./style.css','./app.js','./mobile.js','./mobile.css','./design.js','./design.css','./library.js','./icon.svg','./manifest.webmanifest'];
+const CACHE='orber-shell-v1.4.0';
+const SHELL=['./','./index.html','./style.css','./app.js','./mobile.js','./mobile.css','./design.js','./design.css','./library.js','./catalog.js','./kids.js','./icon.svg','./manifest.webmanifest'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))));
 self.addEventListener('message',e=>{if(e.data?.type==='SKIP_WAITING')self.skipWaiting()});
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('orber-shell-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
